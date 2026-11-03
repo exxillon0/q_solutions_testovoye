@@ -20,6 +20,7 @@ _INIT_SCRIPT = r"""
     window.__pwInjected = true;
 
     const CURSOR_ID = '__pw_svg_cursor';
+    const STORAGE_KEY = '__pwCursorPos';
 
     const createLayer = (id, z) => {
         const el = document.createElement('div');
@@ -30,10 +31,8 @@ _INIT_SCRIPT = r"""
         return el;
     };
 
-           const STORAGE_KEY = '__pwCursorPos';
+    // Позиция курсора: читаем сохранённую (переживает same-origin навигацию)
     let mx = 100, my = 100;
-
-    // Читаем сохранённую позицию (выживает при same-origin навигации)
     try {
         const saved = sessionStorage.getItem(STORAGE_KEY);
         if (saved) {
@@ -49,8 +48,8 @@ _INIT_SCRIPT = r"""
     const updateCursor = () => {
         const c = document.getElementById(CURSOR_ID);
         if (c) {
-            c.style.transform = `translate(${mx - 4}px, ${my - 2}px)`;
-            c.style.opacity = '1';  // показываем после первой установки позиции
+            c.style.transform = `translate(${mx}px, ${my}px)`;
+            c.style.opacity = '1';
         }
     };
 
@@ -60,18 +59,35 @@ _INIT_SCRIPT = r"""
             document.documentElement.appendChild(createLayer('__pw_ripple_layer', 2147483646));
         if (!document.getElementById('__pw_callout_layer'))
             document.documentElement.appendChild(createLayer('__pw_callout_layer', 2147483645));
+
         if (!document.getElementById(CURSOR_ID)) {
+            // Контейнер нулевого размера, транслируется прямо на указатель.
             const c = document.createElement('div');
             c.id = CURSOR_ID;
             c.style.cssText =
-                'position:fixed;top:0;left:0;width:32px;height:32px;' +
-                'pointer-events:none;will-change:transform;z-index:2147483647;';
-            c.innerHTML =
+                'position:fixed;top:0;left:0;width:0;height:0;' +
+                'pointer-events:none;will-change:transform;z-index:2147483647;' +
+                'opacity:0;transition:opacity 0.15s ease;';
+
+            // 1) Жёлтая подсветка: круг Ø64 (радиус 32 px) с центром в (0,0).
+            const highlight =
+                '<div style="position:absolute;left:-32px;top:-32px;' +
+                'width:64px;height:64px;border-radius:50%;' +
+                'background:rgba(255,215,0,0.45);' +
+                'box-shadow:0 0 0 2px rgba(255,200,0,0.65);' +
+                'pointer-events:none;"></div>';
+
+            // 2) SVG-стрелка: острие в (0,0) относительно контейнера.
+            //    Внутри SVG острие в (4,2), значит сдвиг на (-4,-2).
+            const arrow =
                 '<svg width="32" height="32" viewBox="0 0 32 32" ' +
+                'style="position:absolute;left:-4px;top:-2px;pointer-events:none;" ' +
                 'xmlns="http://www.w3.org/2000/svg">' +
                 '<path d="M4 2 L4 24 L10 18 L14 28 L18 26 L14 16 L22 16 Z" ' +
                 'fill="white" stroke="black" stroke-width="1.5" ' +
                 'stroke-linejoin="round"/></svg>';
+
+            c.innerHTML = highlight + arrow;  // круг снизу, стрелка сверху
             document.documentElement.appendChild(c);
         }
         updateCursor();
@@ -83,15 +99,19 @@ _INIT_SCRIPT = r"""
         ensureMounted();
     }
 
-    // SVG-курсор следует за реальной мышью Playwright
+    // Следуем за реальной мышью Playwright
     document.addEventListener('mousemove', (e) => {
         mx = e.clientX; my = e.clientY;
-        savePos();                       //
+        savePos();
         updateCursor();
     }, true);
 
-    // Ручная синхронизация позиции (после навигации)
-    window.__pwSetCursor = (x, y) => { mx = x;savePos(); my = y; updateCursor(); };
+    // Ручная синхронизация (нужна после навигации и при rAF-анимации)
+    window.__pwSetCursor = (x, y) => {
+        mx = x; my = y;
+        savePos();
+        updateCursor();
+    };
 
     // Ripple при клике
     const spawnRipple = (x, y) => {
@@ -115,7 +135,7 @@ _INIT_SCRIPT = r"""
     };
     document.addEventListener('mousedown', (e) => spawnRipple(e.clientX, e.clientY), true);
 
-    // Callout: жёлтый фон, чёрный 16pt текст, авто-размер, fade-in/out
+    // Callout: жёлтый фон, чёрный 16pt, авто-размер, fade-in/out
     window.__pwShowCallout = (text, bgColor, textColor, fade) => new Promise((resolve) => {
         const layer = document.getElementById('__pw_callout_layer');
         if (!layer) { resolve(); return; }
